@@ -17,57 +17,67 @@ class _PdfViewerState extends State<PdfViewer> {
   String? filePath;
   Uint8List? pdfData;
   bool isLoading = false;
-
-  Uint8List? currentPdfBytes;  // ← Guardar datos actuales para descargar
+  Uint8List? currentPdfBytes;  // ← Ahora se actualiza correctamente
 
   @override
   void initState() {
     super.initState();
-    loadAsset(); // Carga asset por defecto
+    loadAsset();
   }
 
   Future<void> loadAsset() async {
     setState(() => isLoading = true);
     
-    // ← CARGAR ASSET COMO BYTES
-    final ByteData data = await rootBundle.load('assets/sample.pdf');
-    final Uint8List bytes = data.buffer.asUint8List();
-    
-    setState(() {
-      isAsset = true;
-      currentPdfBytes = bytes;
-      pdfData = bytes;  // ← Usar pdfData para assets
-      filePath = null;
-      isLoading = false;
-    });
+    try {
+      final ByteData data = await rootBundle.load('assets/sample.pdf');
+      final Uint8List bytes = data.buffer.asUint8List();
+      
+      setState(() {
+        isAsset = true;
+        pdfData = bytes;
+        filePath = null;
+        currentPdfBytes = bytes;  // ← ¡GUARDAR BYTES!
+        isLoading = false;
+      });
+    } catch (e) {
+      print('Error asset: $e');
+      setState(() => isLoading = false);
+    }
   }
 
   Future<void> loadUrl() async {
     setState(() => isLoading = true);
     
     try {
-      //final url = 'https://ontheline.trincoll.edu/images/bookdown/sample-local-pdf.pdf';
       final url = 'https://pdfobject.com/pdf/sample.pdf';
       final response = await http.get(Uri.parse(url));
-      final tempDir = await getTemporaryDirectory();
-      final file = File('${tempDir.path}/sample.pdf');
-      await file.writeAsBytes(response.bodyBytes);
       
-      setState(() {
-        isAsset = false;
-        isLoading = false;
-        currentPdfBytes = response.bodyBytes;
-        pdfData = null;
-        filePath = file.path;
-      });
+      if (response.statusCode == 200) {
+        final tempDir = await getTemporaryDirectory();
+        final file = File('${tempDir.path}/sample.pdf');
+        await file.writeAsBytes(response.bodyBytes);
+        
+        setState(() {
+          isAsset = false;
+          pdfData = null;
+          filePath = file.path;
+          currentPdfBytes = response.bodyBytes;  // ← ¡GUARDAR BYTES!
+          isLoading = false;
+        });
+      }
     } catch (e) {
-      print('Error: $e');
+      print('Error URL: $e');
       setState(() => isLoading = false);
     }
   }
 
   Future<void> downloadToDownloads() async {
-  if (currentPdfBytes == null) return;
+  if (currentPdfBytes == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No hay PDF para descargar')),
+      );
+      return;
+    }
   
   // ← PERMISOS CORRECTOS por versión Android
   if (Platform.isAndroid) {
@@ -111,7 +121,7 @@ class _PdfViewerState extends State<PdfViewer> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("PDF Viewer Básico"),
+        title: Text("PDF Viewer ${isAsset ? "(Asset)" : "(URL)"}"),
         actions: [
           IconButton(
             icon: Icon(Icons.swap_horiz),
@@ -122,14 +132,15 @@ class _PdfViewerState extends State<PdfViewer> {
           ),
           IconButton(
             icon: Icon(Icons.download),
-            onPressed: downloadToDownloads,
+            onPressed: currentPdfBytes != null ? downloadToDownloads : null,
           ),
         ],
       ),
       body: Stack(
         children: [
-          if (!isLoading)
+          if (!isLoading && (pdfData != null || filePath != null))
             PDFView(
+              key: ValueKey('pdf_${isAsset}_${filePath ?? 'asset'}'),  // ← KEY ÚNICA
               filePath: filePath,
               pdfData: pdfData,
               enableSwipe: true,
@@ -137,9 +148,29 @@ class _PdfViewerState extends State<PdfViewer> {
               autoSpacing: false,
               pageFling: true,
               pageSnap: true,
+              onError: (error) {
+                print('PDF Error: $error');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Error PDF: $error')),
+                );
+              },
+              onRender: (_) {
+                print('PDF cargado correctamente');
+              },
             ),
           if (isLoading)
-            Center(child: CircularProgressIndicator()),
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Cargando PDF...'),
+                ],
+              ),
+            ),
+          if (!isLoading && pdfData == null && filePath == null)
+            Center(child: Text('Error al cargar PDF')),
         ],
       ),
     );
